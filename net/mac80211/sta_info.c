@@ -88,7 +88,6 @@ static const struct rhashtable_params link_sta_rht_params = {
 	.max_size = CONFIG_MAC80211_STA_HASH_MAX_SIZE,
 };
 
-/* Caller must hold local->sta_mtx */
 static int sta_info_hash_del(struct ieee80211_local *local,
 			     struct sta_info *sta)
 {
@@ -99,19 +98,19 @@ static int sta_info_hash_del(struct ieee80211_local *local,
 static int link_sta_info_hash_add(struct ieee80211_local *local,
 				  struct link_sta_info *link_sta)
 {
-	lockdep_assert_held(&local->sta_mtx);
+	lockdep_assert_wiphy(local->hw.wiphy);
+
 	return rhltable_insert(&local->link_sta_hash,
-			       &link_sta->link_hash_node,
-			       link_sta_rht_params);
+			       &link_sta->link_hash_node, link_sta_rht_params);
 }
 
 static int link_sta_info_hash_del(struct ieee80211_local *local,
 				  struct link_sta_info *link_sta)
 {
-	lockdep_assert_held(&local->sta_mtx);
+	lockdep_assert_wiphy(local->hw.wiphy);
+
 	return rhltable_remove(&local->link_sta_hash,
-			       &link_sta->link_hash_node,
-			       link_sta_rht_params);
+			       &link_sta->link_hash_node, link_sta_rht_params);
 }
 
 static void __cleanup_single_sta(struct sta_info *sta)
@@ -331,7 +330,7 @@ struct sta_info *sta_info_get_by_idx(struct ieee80211_sub_if_data *sdata,
 	int i = 0;
 
 	list_for_each_entry_rcu(sta, &local->sta_list, list,
-				lockdep_is_held(&local->sta_mtx)) {
+				lockdep_is_held(&local->hw.wiphy->mtx)) {
 		if (sdata != sta->sdata)
 			continue;
 		if (i < idx) {
@@ -355,10 +354,9 @@ static void sta_remove_link(struct sta_info *sta, unsigned int link_id,
 	struct sta_link_alloc *alloc = NULL;
 	struct link_sta_info *link_sta;
 
-	link_sta = rcu_access_pointer(sta->link[link_id]);
-	if (link_sta != &sta->deflink)
-		lockdep_assert_held(&sta->local->sta_mtx);
+	lockdep_assert_wiphy(sta->local->hw.wiphy);
 
+	link_sta = rcu_access_pointer(sta->link[link_id]);
 	if (WARN_ON(!link_sta))
 		return;
 
@@ -437,7 +435,6 @@ void sta_info_free(struct ieee80211_local *local, struct sta_info *sta)
 	kfree(sta);
 }
 
-/* Caller must hold local->sta_mtx */
 static int sta_info_hash_add(struct ieee80211_local *local,
 			     struct sta_info *sta)
 {
@@ -714,6 +711,8 @@ static int sta_info_insert_check(struct sta_info *sta)
 {
 	struct ieee80211_sub_if_data *sdata = sta->sdata;
 
+	lockdep_assert_wiphy(sdata->local->hw.wiphy);
+
 	/*
 	 * Can't be a WARN_ON because it can be triggered through a race:
 	 * something inserts a STA (on one CPU) without holding the RTNL
@@ -731,7 +730,6 @@ static int sta_info_insert_check(struct sta_info *sta)
 	 * for correctness.
 	 */
 	rcu_read_lock();
-	lockdep_assert_held(&sdata->local->sta_mtx);
 	if (ieee80211_hw_check(&sdata->local->hw, NEEDS_UNIQUE_STA_ADDR) &&
 	    ieee80211_find_sta_by_ifaddr(&sdata->local->hw, sta->addr, NULL)) {
 		rcu_read_unlock();
@@ -805,11 +803,6 @@ ieee80211_recalc_p2p_go_ps_allowed(struct ieee80211_sub_if_data *sdata)
 	}
 }
 
-/*
- * should be called with sta_mtx locked
- * this function replaces the mutex lock
- * with a RCU lock
- */
 static int sta_info_insert_finish(struct sta_info *sta) __acquires(RCU)
 {
 	struct ieee80211_local *local = sta->local;
@@ -817,7 +810,7 @@ static int sta_info_insert_finish(struct sta_info *sta) __acquires(RCU)
 	struct station_info *sinfo = NULL;
 	int err = 0;
 
-	lockdep_assert_held(&local->sta_mtx);
+	lockdep_assert_wiphy(local->hw.wiphy);
 
 	/* check if STA exists already */
 	if (sta_info_get_bss(sdata, sta->sta.addr)) {
@@ -881,7 +874,7 @@ static int sta_info_insert_finish(struct sta_info *sta) __acquires(RCU)
 			struct link_sta_info *link_sta;
 
 			link_sta = rcu_dereference_protected(sta->link[i],
-							     lockdep_is_held(&local->sta_mtx));
+							     lockdep_is_held(&local->hw.wiphy->mtx));
 
 			if (!link_sta)
 				continue;
@@ -903,7 +896,6 @@ static int sta_info_insert_finish(struct sta_info *sta) __acquires(RCU)
 
 	/* move reference to rcu-protected */
 	rcu_read_lock();
-	mutex_unlock(&local->sta_mtx);
 
 	if (ieee80211_vif_is_mesh(&sdata->vif))
 		mesh_accept_plinks_update(sdata);
@@ -919,7 +911,6 @@ static int sta_info_insert_finish(struct sta_info *sta) __acquires(RCU)
 	synchronize_net();
  out_cleanup:
 	cleanup_single_sta(sta);
-	mutex_unlock(&local->sta_mtx);
 	kfree(sinfo);
 	rcu_read_lock();
 	return err;
@@ -931,13 +922,11 @@ int sta_info_insert_rcu(struct sta_info *sta) __acquires(RCU)
 	int err;
 
 	might_sleep();
-
-	mutex_lock(&local->sta_mtx);
+	lockdep_assert_wiphy(local->hw.wiphy);
 
 	err = sta_info_insert_check(sta);
 	if (err) {
 		sta_info_free(local, sta);
-		mutex_unlock(&local->sta_mtx);
 		rcu_read_lock();
 		return err;
 	}
@@ -1216,7 +1205,7 @@ static int __must_check __sta_info_destroy_part1(struct sta_info *sta)
 	local = sta->local;
 	sdata = sta->sdata;
 
-	lockdep_assert_held(&local->sta_mtx);
+	lockdep_assert_wiphy(local->hw.wiphy);
 
 	/*
 	 * Before removing the station from the driver and
@@ -1241,7 +1230,7 @@ static int __must_check __sta_info_destroy_part1(struct sta_info *sta)
 			continue;
 
 		link_sta = rcu_dereference_protected(sta->link[i],
-						     lockdep_is_held(&local->sta_mtx));
+						     lockdep_is_held(&local->hw.wiphy->mtx));
 
 		link_sta_info_hash_del(local, link_sta);
 	}
@@ -1284,7 +1273,7 @@ static void __sta_info_destroy_part2(struct sta_info *sta)
 	 */
 
 	might_sleep();
-	lockdep_assert_held(&local->sta_mtx);
+	lockdep_assert_wiphy(local->hw.wiphy);
 
 	if (sta->sta_state == IEEE80211_STA_AUTHORIZED) {
 		ret = sta_info_move_state(sta, IEEE80211_STA_ASSOC);
@@ -1360,28 +1349,22 @@ int __must_check __sta_info_destroy(struct sta_info *sta)
 int sta_info_destroy_addr(struct ieee80211_sub_if_data *sdata, const u8 *addr)
 {
 	struct sta_info *sta;
-	int ret;
 
-	mutex_lock(&sdata->local->sta_mtx);
+	lockdep_assert_wiphy(sdata->local->hw.wiphy);
+
 	sta = sta_info_get(sdata, addr);
-	ret = __sta_info_destroy(sta);
-	mutex_unlock(&sdata->local->sta_mtx);
-
-	return ret;
+	return __sta_info_destroy(sta);
 }
 
 int sta_info_destroy_addr_bss(struct ieee80211_sub_if_data *sdata,
 			      const u8 *addr)
 {
 	struct sta_info *sta;
-	int ret;
 
-	mutex_lock(&sdata->local->sta_mtx);
+	lockdep_assert_wiphy(sdata->local->hw.wiphy);
+
 	sta = sta_info_get_bss(sdata, addr);
-	ret = __sta_info_destroy(sta);
-	mutex_unlock(&sdata->local->sta_mtx);
-
-	return ret;
+	return __sta_info_destroy(sta);
 }
 
 static void sta_info_cleanup(struct timer_list *t)
@@ -1421,7 +1404,6 @@ int sta_info_init(struct ieee80211_local *local)
 	}
 
 	spin_lock_init(&local->tim_lock);
-	mutex_init(&local->sta_mtx);
 	INIT_LIST_HEAD(&local->sta_list);
 
 	timer_setup(&local->sta_cleanup, sta_info_cleanup, 0);
@@ -1444,11 +1426,11 @@ int __sta_info_flush(struct ieee80211_sub_if_data *sdata, bool vlans)
 	int ret = 0;
 
 	might_sleep();
+	lockdep_assert_wiphy(local->hw.wiphy);
 
 	WARN_ON(vlans && sdata->vif.type != NL80211_IFTYPE_AP);
 	WARN_ON(vlans && !sdata->bss);
 
-	mutex_lock(&local->sta_mtx);
 	list_for_each_entry_safe(sta, tmp, &local->sta_list, list) {
 		if (sdata == sta->sdata ||
 		    (vlans && sdata->bss == sta->sdata->bss)) {
@@ -1463,7 +1445,6 @@ int __sta_info_flush(struct ieee80211_sub_if_data *sdata, bool vlans)
 		list_for_each_entry_safe(sta, tmp, &free_list, free_list)
 			__sta_info_destroy_part2(sta);
 	}
-	mutex_unlock(&local->sta_mtx);
 
 	return ret;
 }
@@ -1474,7 +1455,7 @@ void ieee80211_sta_expire(struct ieee80211_sub_if_data *sdata,
 	struct ieee80211_local *local = sdata->local;
 	struct sta_info *sta, *tmp;
 
-	mutex_lock(&local->sta_mtx);
+	lockdep_assert_wiphy(local->hw.wiphy);
 
 	list_for_each_entry_safe(sta, tmp, &local->sta_list, list) {
 		unsigned long last_active = ieee80211_sta_last_active(sta);
@@ -1493,8 +1474,6 @@ void ieee80211_sta_expire(struct ieee80211_sub_if_data *sdata,
 			WARN_ON(__sta_info_destroy(sta));
 		}
 	}
-
-	mutex_unlock(&local->sta_mtx);
 }
 
 struct ieee80211_sta *ieee80211_find_sta_by_ifaddr(struct ieee80211_hw *hw,
@@ -2849,7 +2828,7 @@ int ieee80211_sta_allocate_link(struct sta_info *sta, unsigned int link_id)
 	struct sta_link_alloc *alloc;
 	int ret;
 
-	lockdep_assert_held(&sdata->local->sta_mtx);
+	lockdep_assert_wiphy(sdata->local->hw.wiphy);
 
 	/* must represent an MLD from the start */
 	if (WARN_ON(!sta->sta.valid_links))
@@ -2878,7 +2857,7 @@ int ieee80211_sta_allocate_link(struct sta_info *sta, unsigned int link_id)
 
 void ieee80211_sta_free_link(struct sta_info *sta, unsigned int link_id)
 {
-	lockdep_assert_held(&sta->sdata->local->sta_mtx);
+	lockdep_assert_wiphy(sta->sdata->local->hw.wiphy);
 
 	sta_remove_link(sta, link_id, false);
 }
@@ -2892,7 +2871,7 @@ int ieee80211_sta_activate_link(struct sta_info *sta, unsigned int link_id)
 	int ret;
 
 	link_sta = rcu_dereference_protected(sta->link[link_id],
-					     lockdep_is_held(&sdata->local->sta_mtx));
+					     lockdep_is_held(&sdata->local->hw.wiphy->mtx));
 
 	if (WARN_ON(old_links == new_links || !link_sta))
 		return -EINVAL;
@@ -2934,7 +2913,7 @@ void ieee80211_sta_remove_link(struct sta_info *sta, unsigned int link_id)
 	struct ieee80211_sub_if_data *sdata = sta->sdata;
 	u16 old_links = sta->sta.valid_links;
 
-	lockdep_assert_held(&sdata->local->sta_mtx);
+	lockdep_assert_wiphy(sdata->local->hw.wiphy);
 
 	sta->sta.valid_links &= ~BIT(link_id);
 
@@ -2973,7 +2952,7 @@ bool lockdep_sta_mutex_held(struct ieee80211_sta *pubsta)
 {
 	struct sta_info *sta = container_of(pubsta, struct sta_info, sta);
 
-	return lockdep_is_held(&sta->local->sta_mtx);
+	return lockdep_is_held(&sta->local->hw.wiphy->mtx);
 }
 EXPORT_SYMBOL(lockdep_sta_mutex_held);
 #endif

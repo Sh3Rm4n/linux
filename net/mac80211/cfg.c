@@ -213,6 +213,8 @@ static int ieee80211_change_iface(struct wiphy *wiphy,
 	struct sta_info *sta;
 	int ret;
 
+	lockdep_assert_wiphy(local->hw.wiphy);
+
 	ret = ieee80211_if_change_type(sdata, type);
 	if (ret)
 		return ret;
@@ -234,12 +236,10 @@ static int ieee80211_change_iface(struct wiphy *wiphy,
 		if (!ifmgd->associated)
 			return 0;
 
-		mutex_lock(&local->sta_mtx);
 		sta = sta_info_get(sdata, sdata->deflink.u.mgd.bssid);
 		if (sta)
 			drv_sta_set_4addr(local, sdata, &sta->sta,
 					  params->use_4addr);
-		mutex_unlock(&local->sta_mtx);
 
 		if (params->use_4addr)
 			ieee80211_send_4addr_nullfunc(local, sdata);
@@ -471,7 +471,8 @@ static int ieee80211_add_key(struct wiphy *wiphy, struct net_device *dev,
 	struct ieee80211_local *local = sdata->local;
 	struct sta_info *sta = NULL;
 	struct ieee80211_key *key;
-	int err;
+
+	lockdep_assert_wiphy(local->hw.wiphy);
 
 	if (!ieee80211_sdata_running(sdata))
 		return -ENETDOWN;
@@ -509,8 +510,6 @@ static int ieee80211_add_key(struct wiphy *wiphy, struct net_device *dev,
 	if (params->mode == NL80211_KEY_NO_TX)
 		key->conf.flags |= IEEE80211_KEY_FLAG_NO_AUTO_TX;
 
-	mutex_lock(&local->sta_mtx);
-
 	if (mac_addr) {
 		sta = sta_info_get_bss(sdata, mac_addr);
 		/*
@@ -525,8 +524,7 @@ static int ieee80211_add_key(struct wiphy *wiphy, struct net_device *dev,
 		 */
 		if (!sta || !test_sta_flag(sta, WLAN_STA_ASSOC)) {
 			ieee80211_key_free_unused(key);
-			err = -ENOENT;
-			goto out_unlock;
+			return -ENOENT;
 		}
 	}
 
@@ -564,12 +562,7 @@ static int ieee80211_add_key(struct wiphy *wiphy, struct net_device *dev,
 		break;
 	}
 
-	err = ieee80211_key_link(key, link, sta);
-
- out_unlock:
-	mutex_unlock(&local->sta_mtx);
-
-	return err;
+	return ieee80211_key_link(key, link, sta);
 }
 
 static struct ieee80211_key *
@@ -597,7 +590,7 @@ ieee80211_lookup_key(struct ieee80211_sub_if_data *sdata, int link_id,
 
 		if (link_id >= 0) {
 			link_sta = rcu_dereference_check(sta->link[link_id],
-							 lockdep_is_held(&local->sta_mtx));
+							 lockdep_is_held(&local->hw.wiphy->mtx));
 			if (!link_sta)
 				return NULL;
 		} else {
@@ -642,7 +635,8 @@ static int ieee80211_del_key(struct wiphy *wiphy, struct net_device *dev,
 	struct ieee80211_key *key;
 	int ret;
 
-	mutex_lock(&local->sta_mtx);
+	lockdep_assert_wiphy(local->hw.wiphy);
+
 	mutex_lock(&local->key_mtx);
 
 	key = ieee80211_lookup_key(sdata, link_id, key_idx, pairwise, mac_addr);
@@ -656,7 +650,6 @@ static int ieee80211_del_key(struct wiphy *wiphy, struct net_device *dev,
 	ret = 0;
  out_unlock:
 	mutex_unlock(&local->key_mtx);
-	mutex_unlock(&local->sta_mtx);
 
 	return ret;
 }
@@ -859,7 +852,7 @@ static int ieee80211_dump_station(struct wiphy *wiphy, struct net_device *dev,
 	struct sta_info *sta;
 	int ret = -ENOENT;
 
-	mutex_lock(&local->sta_mtx);
+	lockdep_assert_wiphy(local->hw.wiphy);
 
 	sta = sta_info_get_by_idx(sdata, idx);
 	if (sta) {
@@ -867,8 +860,6 @@ static int ieee80211_dump_station(struct wiphy *wiphy, struct net_device *dev,
 		memcpy(mac, sta->sta.addr, ETH_ALEN);
 		sta_set_sinfo(sta, sinfo, true);
 	}
-
-	mutex_unlock(&local->sta_mtx);
 
 	return ret;
 }
@@ -889,15 +880,13 @@ static int ieee80211_get_station(struct wiphy *wiphy, struct net_device *dev,
 	struct sta_info *sta;
 	int ret = -ENOENT;
 
-	mutex_lock(&local->sta_mtx);
+	lockdep_assert_wiphy(local->hw.wiphy);
 
 	sta = sta_info_get_bss(sdata, mac);
 	if (sta) {
 		ret = 0;
 		sta_set_sinfo(sta, sinfo, true);
 	}
-
-	mutex_unlock(&local->sta_mtx);
 
 	return ret;
 }
@@ -1732,7 +1721,7 @@ static int sta_link_apply_parameters(struct ieee80211_local *local,
 		sdata_dereference(sdata->link[link_id], sdata);
 	struct link_sta_info *link_sta =
 		rcu_dereference_protected(sta->link[link_id],
-					  lockdep_is_held(&local->sta_mtx));
+					  lockdep_is_held(&local->hw.wiphy->mtx));
 
 	/*
 	 * If there are no changes, then accept a link that doesn't exist,
@@ -1966,6 +1955,8 @@ static int ieee80211_add_station(struct wiphy *wiphy, struct net_device *dev,
 	struct ieee80211_sub_if_data *sdata;
 	int err;
 
+	lockdep_assert_wiphy(local->hw.wiphy);
+
 	if (params->vlan) {
 		sdata = IEEE80211_DEV_TO_SUB_IF(params->vlan);
 
@@ -2009,9 +2000,7 @@ static int ieee80211_add_station(struct wiphy *wiphy, struct net_device *dev,
 	 * visible yet), sta_apply_parameters (and inner functions) require
 	 * the mutex due to other paths.
 	 */
-	mutex_lock(&local->sta_mtx);
 	err = sta_apply_parameters(local, sta, params);
-	mutex_unlock(&local->sta_mtx);
 	if (err) {
 		sta_info_free(local, sta);
 		return err;
@@ -2054,13 +2043,11 @@ static int ieee80211_change_station(struct wiphy *wiphy,
 	enum cfg80211_station_type statype;
 	int err;
 
-	mutex_lock(&local->sta_mtx);
+	lockdep_assert_wiphy(local->hw.wiphy);
 
 	sta = sta_info_get_bss(sdata, mac);
-	if (!sta) {
-		err = -ENOENT;
-		goto out_err;
-	}
+	if (!sta)
+		return -ENOENT;
 
 	switch (sdata->vif.type) {
 	case NL80211_IFTYPE_MESH_POINT:
@@ -2090,22 +2077,19 @@ static int ieee80211_change_station(struct wiphy *wiphy,
 			statype = CFG80211_STA_AP_CLIENT_UNASSOC;
 		break;
 	default:
-		err = -EOPNOTSUPP;
-		goto out_err;
+		return -EOPNOTSUPP;
 	}
 
 	err = cfg80211_check_station_change(wiphy, params, statype);
 	if (err)
-		goto out_err;
+		return err;
 
 	if (params->vlan && params->vlan != sta->sdata->dev) {
 		vlansdata = IEEE80211_DEV_TO_SUB_IF(params->vlan);
 
 		if (params->vlan->ieee80211_ptr->use_4addr) {
-			if (vlansdata->u.vlan.sta) {
-				err = -EBUSY;
-				goto out_err;
-			}
+			if (vlansdata->u.vlan.sta)
+				return -EBUSY;
 
 			rcu_assign_pointer(vlansdata->u.vlan.sta, sta);
 			__ieee80211_check_fast_rx_iface(vlansdata);
@@ -2140,9 +2124,7 @@ static int ieee80211_change_station(struct wiphy *wiphy,
 		err = sta_apply_parameters(local, sta, params);
 	}
 	if (err)
-		goto out_err;
-
-	mutex_unlock(&local->sta_mtx);
+		return err;
 
 	if (sdata->vif.type == NL80211_IFTYPE_STATION &&
 	    params->sta_flags_mask & BIT(NL80211_STA_FLAG_AUTHORIZED)) {
@@ -2151,9 +2133,6 @@ static int ieee80211_change_station(struct wiphy *wiphy,
 	}
 
 	return 0;
-out_err:
-	mutex_unlock(&local->sta_mtx);
-	return err;
 }
 
 #ifdef CONFIG_MAC80211_MESH
@@ -4479,7 +4458,8 @@ static int ieee80211_set_tid_config(struct wiphy *wiphy,
 {
 	struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
 	struct sta_info *sta;
-	int ret;
+
+	lockdep_assert_wiphy(sdata->local->hw.wiphy);
 
 	if (!sdata->local->ops->set_tid_config)
 		return -EOPNOTSUPP;
@@ -4487,17 +4467,11 @@ static int ieee80211_set_tid_config(struct wiphy *wiphy,
 	if (!tid_conf->peer)
 		return drv_set_tid_config(sdata->local, sdata, NULL, tid_conf);
 
-	mutex_lock(&sdata->local->sta_mtx);
 	sta = sta_info_get_bss(sdata, tid_conf->peer);
-	if (!sta) {
-		mutex_unlock(&sdata->local->sta_mtx);
+	if (!sta)
 		return -ENOENT;
-	}
 
-	ret = drv_set_tid_config(sdata->local, sdata, &sta->sta, tid_conf);
-	mutex_unlock(&sdata->local->sta_mtx);
-
-	return ret;
+	return drv_set_tid_config(sdata->local, sdata, &sta->sta, tid_conf);
 }
 
 static int ieee80211_reset_tid_config(struct wiphy *wiphy,
@@ -4506,7 +4480,8 @@ static int ieee80211_reset_tid_config(struct wiphy *wiphy,
 {
 	struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
 	struct sta_info *sta;
-	int ret;
+
+	lockdep_assert_wiphy(sdata->local->hw.wiphy);
 
 	if (!sdata->local->ops->reset_tid_config)
 		return -EOPNOTSUPP;
@@ -4514,17 +4489,11 @@ static int ieee80211_reset_tid_config(struct wiphy *wiphy,
 	if (!peer)
 		return drv_reset_tid_config(sdata->local, sdata, NULL, tids);
 
-	mutex_lock(&sdata->local->sta_mtx);
 	sta = sta_info_get_bss(sdata, peer);
-	if (!sta) {
-		mutex_unlock(&sdata->local->sta_mtx);
+	if (!sta)
 		return -ENOENT;
-	}
 
-	ret = drv_reset_tid_config(sdata->local, sdata, &sta->sta, tids);
-	mutex_unlock(&sdata->local->sta_mtx);
-
-	return ret;
+	return drv_reset_tid_config(sdata->local, sdata, &sta->sta, tids);
 }
 
 static int ieee80211_set_sar_specs(struct wiphy *wiphy,
@@ -4852,13 +4821,10 @@ ieee80211_add_link_station(struct wiphy *wiphy, struct net_device *dev,
 {
 	struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
 	struct ieee80211_local *local = wiphy_priv(wiphy);
-	int ret;
 
-	mutex_lock(&sdata->local->sta_mtx);
-	ret = sta_add_link_station(local, sdata, params);
-	mutex_unlock(&sdata->local->sta_mtx);
+	lockdep_assert_wiphy(sdata->local->hw.wiphy);
 
-	return ret;
+	return sta_add_link_station(local, sdata, params);
 }
 
 static int sta_mod_link_station(struct ieee80211_local *local,
@@ -4883,13 +4849,10 @@ ieee80211_mod_link_station(struct wiphy *wiphy, struct net_device *dev,
 {
 	struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
 	struct ieee80211_local *local = wiphy_priv(wiphy);
-	int ret;
 
-	mutex_lock(&sdata->local->sta_mtx);
-	ret = sta_mod_link_station(local, sdata, params);
-	mutex_unlock(&sdata->local->sta_mtx);
+	lockdep_assert_wiphy(sdata->local->hw.wiphy);
 
-	return ret;
+	return sta_mod_link_station(local, sdata, params);
 }
 
 static int sta_del_link_station(struct ieee80211_sub_if_data *sdata,
@@ -4918,13 +4881,10 @@ ieee80211_del_link_station(struct wiphy *wiphy, struct net_device *dev,
 			   struct link_station_del_parameters *params)
 {
 	struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
-	int ret;
 
-	mutex_lock(&sdata->local->sta_mtx);
-	ret = sta_del_link_station(sdata, params);
-	mutex_unlock(&sdata->local->sta_mtx);
+	lockdep_assert_wiphy(sdata->local->hw.wiphy);
 
-	return ret;
+	return sta_del_link_station(sdata, params);
 }
 
 static int ieee80211_set_hw_timestamp(struct wiphy *wiphy,
