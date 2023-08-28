@@ -38,6 +38,8 @@ static inline void drv_tx(struct ieee80211_local *local,
 static inline void drv_sync_rx_queues(struct ieee80211_local *local,
 				      struct sta_info *sta)
 {
+	might_sleep();
+
 	if (local->ops->sync_rx_queues) {
 		trace_drv_sync_rx_queues(local, sta->sdata, &sta->sta);
 		local->ops->sync_rx_queues(&local->hw);
@@ -567,6 +569,8 @@ static inline void drv_sta_statistics(struct ieee80211_local *local,
 				      struct ieee80211_sta *sta,
 				      struct station_info *sinfo)
 {
+	might_sleep();
+
 	sdata = get_bss_sdata(sdata);
 	if (!check_sdata_in_driver(sdata))
 		return;
@@ -613,6 +617,8 @@ static inline int drv_get_survey(struct ieee80211_local *local, int idx,
 				struct survey_info *survey)
 {
 	int ret = -EOPNOTSUPP;
+
+	might_sleep();
 
 	trace_drv_get_survey(local, idx, survey);
 
@@ -795,6 +801,8 @@ static inline void drv_set_rekey_data(struct ieee80211_local *local,
 				      struct ieee80211_sub_if_data *sdata,
 				      struct cfg80211_gtk_rekey_data *data)
 {
+	might_sleep();
+
 	if (!check_sdata_in_driver(sdata))
 		return;
 
@@ -985,6 +993,8 @@ static inline void drv_stop_ap(struct ieee80211_local *local,
 			       struct ieee80211_sub_if_data *sdata,
 			       struct ieee80211_bss_conf *link_conf)
 {
+	might_sleep();
+
 	/* make sure link_conf is protected */
 	drv_verify_link_exists(sdata, link_conf);
 
@@ -1014,6 +1024,8 @@ drv_set_default_unicast_key(struct ieee80211_local *local,
 			    struct ieee80211_sub_if_data *sdata,
 			    int key_idx)
 {
+	might_sleep();
+
 	if (!check_sdata_in_driver(sdata))
 		return;
 
@@ -1044,6 +1056,8 @@ drv_channel_switch_beacon(struct ieee80211_sub_if_data *sdata,
 {
 	struct ieee80211_local *local = sdata->local;
 
+	might_sleep();
+
 	if (local->ops->channel_switch_beacon) {
 		trace_drv_channel_switch_beacon(local, sdata, chandef);
 		local->ops->channel_switch_beacon(&local->hw, &sdata->vif,
@@ -1057,6 +1071,8 @@ drv_pre_channel_switch(struct ieee80211_sub_if_data *sdata,
 {
 	struct ieee80211_local *local = sdata->local;
 	int ret = 0;
+
+	might_sleep();
 
 	if (!check_sdata_in_driver(sdata))
 		return -EIO;
@@ -1075,6 +1091,8 @@ drv_post_channel_switch(struct ieee80211_sub_if_data *sdata)
 	struct ieee80211_local *local = sdata->local;
 	int ret = 0;
 
+	might_sleep();
+
 	if (!check_sdata_in_driver(sdata))
 		return -EIO;
 
@@ -1090,6 +1108,8 @@ drv_abort_channel_switch(struct ieee80211_sub_if_data *sdata)
 {
 	struct ieee80211_local *local = sdata->local;
 
+	might_sleep();
+
 	if (!check_sdata_in_driver(sdata))
 		return;
 
@@ -1104,6 +1124,8 @@ drv_channel_switch_rx_beacon(struct ieee80211_sub_if_data *sdata,
 			     struct ieee80211_channel_switch *ch_switch)
 {
 	struct ieee80211_local *local = sdata->local;
+
+	might_sleep();
 
 	if (!check_sdata_in_driver(sdata))
 		return;
@@ -1160,6 +1182,8 @@ static inline int drv_get_txpower(struct ieee80211_local *local,
 				  struct ieee80211_sub_if_data *sdata, int *dbm)
 {
 	int ret;
+
+	might_sleep();
 
 	if (!local->ops->get_txpower)
 		return -EOPNOTSUPP;
@@ -1264,6 +1288,10 @@ drv_get_ftm_responder_stats(struct ieee80211_local *local,
 			    struct cfg80211_ftm_responder_stats *ftm_stats)
 {
 	u32 ret = -EOPNOTSUPP;
+
+	might_sleep();
+	if (!check_sdata_in_driver(sdata))
+		return -EIO;
 
 	if (local->ops->get_ftm_responder_stats)
 		ret = local->ops->get_ftm_responder_stats(&local->hw,
@@ -1434,6 +1462,8 @@ static inline void drv_sta_set_4addr(struct ieee80211_local *local,
 				     struct ieee80211_sta *sta, bool enabled)
 {
 	sdata = get_bss_sdata(sdata);
+
+	might_sleep();
 	if (!check_sdata_in_driver(sdata))
 		return;
 
@@ -1449,6 +1479,8 @@ static inline void drv_sta_set_decap_offload(struct ieee80211_local *local,
 					     bool enabled)
 {
 	sdata = get_bss_sdata(sdata);
+
+	might_sleep();
 	if (!check_sdata_in_driver(sdata))
 		return;
 
@@ -1523,6 +1555,8 @@ static inline int drv_net_setup_tc(struct ieee80211_local *local,
 				   enum tc_setup_type type, void *type_data)
 {
 	int ret = -EOPNOTSUPP;
+
+	might_sleep();
 
 	sdata = get_bss_sdata(sdata);
 	trace_drv_net_setup_tc(local, sdata, type);
