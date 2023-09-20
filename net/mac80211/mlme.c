@@ -8344,8 +8344,10 @@ int ieee80211_mgd_assoc(struct ieee80211_sub_if_data *sdata,
 		err = ieee80211_prep_channel(sdata, NULL,
 					     assoc_data->link[i].bss, true,
 					     &assoc_data->link[i].conn_flags);
-		if (err)
+		if (err) {
+			req->links[i].error = err;
 			goto err_clear;
+		}
 	}
 
 	/* needed for transmitting the assoc frames properly */
