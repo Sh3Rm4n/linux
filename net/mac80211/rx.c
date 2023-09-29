@@ -2412,7 +2412,8 @@ static int ieee80211_drop_unencrypted(struct ieee80211_rx_data *rx, __le16 fc)
 	return 0;
 }
 
-static int ieee80211_drop_unencrypted_mgmt(struct ieee80211_rx_data *rx)
+static ieee80211_rx_result
+ieee80211_drop_unencrypted_mgmt(struct ieee80211_rx_data *rx)
 {
 	struct ieee80211_rx_status *status = IEEE80211_SKB_RXCB(rx->skb);
 	struct ieee80211_mgmt *mgmt = (void *)rx->skb->data;
@@ -2480,7 +2481,7 @@ static int ieee80211_drop_unencrypted_mgmt(struct ieee80211_rx_data *rx)
 			return -EACCES;
 	}
 
-	return 0;
+	return RX_CONTINUE;
 }
 
 static int
