@@ -1060,7 +1060,7 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 
 	for_each_element(elem, params->start, params->len) {
 		const struct element *subelem;
-		bool elem_parse_failed;
+		u8 elem_parse_failed;
 		u8 id = elem->id;
 		u8 elen = elem->datalen;
 		const u8 *pos = elem->data;
@@ -1116,7 +1116,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 		 * that if the content gets bigger it might be needed more than once
 		 */
 			if (test_bit(id, seen_elems)) {
-				elems->parse_error = true;
+				elems->parse_error |=
+					IEEE80211_PARSE_ERR_DUP_ELEM;
 				continue;
 			}
 			break;
@@ -1125,19 +1126,21 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 		if (calc_crc && id < 64 && (params->filter & (1ULL << id)))
 			crc = crc32_be(crc, pos - 2, elen + 2);
 
-		elem_parse_failed = false;
+		elem_parse_failed = 0;
 
 		switch (id) {
 		case WLAN_EID_LINK_ID:
 			if (elen + 2 < sizeof(struct ieee80211_tdls_lnkie)) {
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 				break;
 			}
 			elems->lnk_id = (void *)(pos - 2);
 			break;
 		case WLAN_EID_CHAN_SWITCH_TIMING:
 			if (elen < sizeof(struct ieee80211_ch_switch_timing)) {
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 				break;
 			}
 			elems->ch_sw_timing = (void *)pos;
@@ -1158,14 +1161,16 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 			if (elen >= 1)
 				elems->ds_params = pos;
 			else
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 			break;
 		case WLAN_EID_TIM:
 			if (elen >= sizeof(struct ieee80211_tim_ie)) {
 				elems->tim = (void *)pos;
 				elems->tim_len = elen;
 			} else
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 			break;
 		case WLAN_EID_VENDOR_SPECIFIC:
 			if (elen >= 4 && pos[0] == 0x00 && pos[1] == 0x50 &&
@@ -1195,7 +1200,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 			if (elen >= 1)
 				elems->erp_info = pos;
 			else
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 			break;
 		case WLAN_EID_EXT_SUPP_RATES:
 			elems->ext_supp_rates = pos;
@@ -1207,7 +1213,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 			if (elen >= sizeof(struct ieee80211_ht_cap))
 				elems->ht_cap_elem = (void *)pos;
 			else
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 			break;
 		case WLAN_EID_HT_OPERATION:
 			if (params->mode < IEEE80211_CONN_MODE_HT)
@@ -1215,7 +1222,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 			if (elen >= sizeof(struct ieee80211_ht_operation))
 				elems->ht_operation = (void *)pos;
 			else
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 			break;
 		case WLAN_EID_VHT_CAPABILITY:
 			if (params->mode < IEEE80211_CONN_MODE_VHT)
@@ -1223,7 +1231,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 			if (elen >= sizeof(struct ieee80211_vht_cap))
 				elems->vht_cap_elem = (void *)pos;
 			else
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 			break;
 		case WLAN_EID_VHT_OPERATION:
 			if (params->mode < IEEE80211_CONN_MODE_VHT)
@@ -1234,7 +1243,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 					crc = crc32_be(crc, pos - 2, elen + 2);
 				break;
 			}
-			elem_parse_failed = true;
+			elem_parse_failed =
+				IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 			break;
 		case WLAN_EID_OPMODE_NOTIF:
 			if (params->mode < IEEE80211_CONN_MODE_VHT)
@@ -1245,7 +1255,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 					crc = crc32_be(crc, pos - 2, elen + 2);
 				break;
 			}
-			elem_parse_failed = true;
+			elem_parse_failed =
+				IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 			break;
 		case WLAN_EID_MESH_ID:
 			elems->mesh_id = pos;
@@ -1255,7 +1266,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 			if (elen >= sizeof(struct ieee80211_meshconf_ie))
 				elems->mesh_config = (void *)pos;
 			else
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 			break;
 		case WLAN_EID_PEER_MGMT:
 			elems->peering = pos;
@@ -1281,18 +1293,21 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 			if (elen >= sizeof(struct ieee80211_rann_ie))
 				elems->rann = (void *)pos;
 			else
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 			break;
 		case WLAN_EID_CHANNEL_SWITCH:
 			if (elen != sizeof(struct ieee80211_channel_sw_ie)) {
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 				break;
 			}
 			elems->ch_switch_ie = (void *)pos;
 			break;
 		case WLAN_EID_EXT_CHANSWITCH_ANN:
 			if (elen != sizeof(struct ieee80211_ext_chansw_ie)) {
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 				break;
 			}
 			elems->ext_chansw_ie = (void *)pos;
@@ -1301,7 +1316,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 			if (params->mode < IEEE80211_CONN_MODE_HT)
 				break;
 			if (elen != sizeof(struct ieee80211_sec_chan_offs_ie)) {
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 				break;
 			}
 			elems->sec_chan_offs = (void *)pos;
@@ -1309,7 +1325,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 		case WLAN_EID_CHAN_SWITCH_PARAM:
 			if (elen <
 			    sizeof(*elems->mesh_chansw_params_ie)) {
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 				break;
 			}
 			elems->mesh_chansw_params_ie = (void *)pos;
@@ -1317,9 +1334,16 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 		case WLAN_EID_WIDE_BW_CHANNEL_SWITCH:
 			if (params->mode < IEEE80211_CONN_MODE_VHT)
 				break;
-			if (!params->action ||
-			    elen < sizeof(*elems->wide_bw_chansw_ie)) {
-				elem_parse_failed = true;
+
+			if (!params->action) {
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_UNEXPECTED_ELEM;
+				break;
+			}
+
+			if (elen < sizeof(*elems->wide_bw_chansw_ie)) {
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 				break;
 			}
 			elems->wide_bw_chansw_ie = (void *)pos;
@@ -1328,7 +1352,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 			if (params->mode < IEEE80211_CONN_MODE_VHT)
 				break;
 			if (params->action) {
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_UNEXPECTED_ELEM;
 				break;
 			}
 			/*
@@ -1342,7 +1367,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 					elems->wide_bw_chansw_ie =
 						(void *)subelem->data;
 				else
-					elem_parse_failed = true;
+					elem_parse_failed =
+						IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 			}
 
 			if (params->mode < IEEE80211_CONN_MODE_EHT)
@@ -1358,7 +1384,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 									   edatalen))
 					elems->bandwidth_indication = edata;
 				else
-					elem_parse_failed = true;
+					elem_parse_failed =
+						IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 			}
 			break;
 		case WLAN_EID_COUNTRY:
@@ -1367,7 +1394,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 			break;
 		case WLAN_EID_PWR_CONSTRAINT:
 			if (elen != 1) {
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 				break;
 			}
 			elems->pwr_constr_elem = pos;
@@ -1379,7 +1407,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 			 * tag (0x00).
 			 */
 			if (elen < 4) {
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 				break;
 			}
 
@@ -1388,7 +1417,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 				break;
 
 			if (elen != 6) {
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 				break;
 			}
 
@@ -1399,7 +1429,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 			break;
 		case WLAN_EID_ADDBA_EXT:
 			if (elen < sizeof(struct ieee80211_addba_ext_ie)) {
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 				break;
 			}
 			elems->addba_ext_ie = (void *)pos;
@@ -1408,7 +1439,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 			if (elen >= sizeof(struct ieee80211_timeout_interval_ie))
 				elems->timeout_int = (void *)pos;
 			else
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 			break;
 		case WLAN_EID_BSS_MAX_IDLE_PERIOD:
 			if (elen >= sizeof(*elems->max_idle_period_ie))
@@ -1441,7 +1473,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 			if (elen >= sizeof(*elems->s1g_capab))
 				elems->s1g_capab = (void *)pos;
 			else
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 			break;
 		case WLAN_EID_S1G_OPERATION:
 			if (params->mode != IEEE80211_CONN_MODE_S1G)
@@ -1449,7 +1482,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 			if (elen == sizeof(*elems->s1g_oper))
 				elems->s1g_oper = (void *)pos;
 			else
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 			break;
 		case WLAN_EID_S1G_BCN_COMPAT:
 			if (params->mode != IEEE80211_CONN_MODE_S1G)
@@ -1457,7 +1491,8 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 			if (elen == sizeof(*elems->s1g_bcn_compat))
 				elems->s1g_bcn_compat = (void *)pos;
 			else
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 			break;
 		case WLAN_EID_AID_RESPONSE:
 			if (params->mode != IEEE80211_CONN_MODE_S1G)
@@ -1465,20 +1500,21 @@ _ieee802_11_parse_elems_full(struct ieee80211_elems_parse_params *params,
 			if (elen == sizeof(struct ieee80211_aid_response_ie))
 				elems->aid_resp = (void *)pos;
 			else
-				elem_parse_failed = true;
+				elem_parse_failed =
+					IEEE80211_PARSE_ERR_BAD_ELEM_SIZE;
 			break;
 		default:
 			break;
 		}
 
 		if (elem_parse_failed)
-			elems->parse_error = true;
+			elems->parse_error |= elem_parse_failed;
 		else
 			__set_bit(id, seen_elems);
 	}
 
 	if (!for_each_element_completed(elem, params->start, params->len))
-		elems->parse_error = true;
+		elems->parse_error |= IEEE80211_PARSE_ERR_INVALID_END;
 
 	return crc;
 }
